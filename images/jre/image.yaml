@@ -1,0 +1,50 @@
+# NINELINE jre: OpenJDK 21 runtime from Wolfi on the NINELINE base. The
+# entrypoint is `java`; run a jar with `docker run … -jar app.jar`.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - glibc
+    - tzdata
+    - openjdk-21-default-jvm
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 65532
+  users:
+    - username: nonroot
+      uid: 65532
+      gid: 65532
+  run-as: "65532"
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 65532
+    gid: 65532
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/java
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.title: "NINELINE jre"
+  org.opencontainers.image.description: "OpenJDK 21 runtime from Wolfi packages on the NINELINE base: no shell, no package manager, non-root."
+  org.opencontainers.image.vendor: "Optimal, LLC"
+  org.opencontainers.image.source: "https://github.com/optimal-cyber/nineline-images"
+  org.opencontainers.image.url: "https://9line.gooptimal.io"

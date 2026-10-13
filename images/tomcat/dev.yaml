@@ -1,0 +1,11 @@
+include: image.yaml
+
+contents:
+  packages:
+    - busybox
+    - bash
+    - apk-tools
+
+annotations:
+  org.opencontainers.image.title: "NINELINE tomcat (dev)"
+  org.opencontainers.image.description: "NINELINE tomcat plus bash, busybox and apk-tools for debugging. Not for production."

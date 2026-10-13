@@ -1,0 +1,8 @@
+# Laptop build output and local signing material (CI signs keyless; see local-kit/README.md)
+local-kit/out/
+local-kit/build/
+local-kit/cosign.key
+local-kit/cosign.pub
+local-kit/scan_table.md
+out/
+local-kit/kit.out
