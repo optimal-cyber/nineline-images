@@ -1,0 +1,256 @@
+# The NINELINE image factory.
+#
+# Builds every image (or the ones named on dispatch) for x86_64 and aarch64,
+# publishes to ghcr.io/<owner>/nineline/<name>, signs each digest keyless
+# (Sigstore Fulcio + Rekor, cosign v2.5.x classic layout), attaches SPDX and
+# CycloneDX SBOM attestations per platform, records SLSA v1.0 build provenance
+# (GitHub artifact attestations, Build Level 2), scans each image and the
+# upstream image it replaces with the same Trivy version, checks growth against
+# baseline.json, and publishes manifest.json with every digest as a run artifact.
+#
+# Nightly 06:30 UTC, on demand, and on a push that changes an image or this file.
+name: factory
+
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Images to build, comma-separated: base, nginx, jre, tomcat, ubi9-hardened. Empty builds all."
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "images/**"
+      - "tools/**"
+      - ".github/workflows/factory.yml"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAMESPACE: ghcr.io/${{ github.repository_owner }}/nineline
+  COSIGN_VERSION: v2.5.3
+  APKO_VERSION: "1.4.11"
+  TRIVY_VERSION: v0.75.0
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.plan.outputs.images }}
+      epoch: ${{ steps.plan.outputs.epoch }}
+      date_tag: ${{ steps.plan.outputs.date_tag }}
+    steps:
+      - id: plan
+        env:
+          REQUESTED: ${{ inputs.images }}
+        run: |
+          images=$(python3 - <<'PY'
+          import json, os
+          known = ["base", "nginx", "jre", "tomcat", "ubi9-hardened"]
+          asked = [s.strip() for s in os.environ.get("REQUESTED", "").split(",") if s.strip()]
+          bad = [s for s in asked if s not in known]
+          if bad:
+              raise SystemExit(f"unknown image(s): {', '.join(bad)}; known: {', '.join(known)}")
+          print(json.dumps(asked or known))
+          PY
+          )
+          epoch=$(date +%s)
+          {
+            echo "images=$images"
+            echo "epoch=$epoch"
+            echo "date_tag=$(date -u -d "@$epoch" +%Y.%m.%d)"
+          } >> "$GITHUB_OUTPUT"
+          echo "building $images at epoch $epoch"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    env:
+      IMAGE: ${{ matrix.image }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      DATE_TAG: ${{ needs.plan.outputs.date_tag }}
+      OUT: out/${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - uses: imjasonh/setup-crane@v0.7
+
+      - uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+
+      - id: syft
+        uses: anchore/sbom-action/download-syft@v0.24.3
+      - run: sudo ln -sf "${{ steps.syft.outputs.cmd }}" /usr/local/bin/syft && syft version
+
+      - name: Tool versions
+        run: |
+          mkdir -p "$OUT"
+          { cosign version; crane version; trivy --version | head -1; syft version | head -2; } | tee "$OUT/tool-versions.txt"
+
+      # --- glibc family: apko -------------------------------------------------------
+      - name: Install apko
+        if: matrix.image != 'ubi9-hardened'
+        run: tools/install-apko.sh "$APKO_VERSION"
+
+      - name: Build and publish with apko (prod and dev, x86_64 and aarch64)
+        if: matrix.image != 'ubi9-hardened'
+        run: tools/build-apko.sh "$IMAGE"
+
+      # --- Red Hat compatible family: UBI 9 with buildx -------------------------------
+      - uses: docker/setup-qemu-action@v4.4.0
+        if: matrix.image == 'ubi9-hardened'
+      - uses: docker/setup-buildx-action@v4.4.1
+        if: matrix.image == 'ubi9-hardened'
+
+      - name: Build and publish ubi9-hardened (amd64 and arm64)
+        if: matrix.image == 'ubi9-hardened'
+        id: ubi
+        continue-on-error: true
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: images/ubi9-hardened
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE_NAMESPACE }}/ubi9-hardened:latest
+          provenance: false
+          sbom: false
+          build-args: SOURCE_DATE_EPOCH=${{ needs.plan.outputs.epoch }}
+
+      - name: Build and publish ubi9-hardened (amd64 only, after the arm64 build failed)
+        if: matrix.image == 'ubi9-hardened' && steps.ubi.outcome == 'failure'
+        id: ubi_amd64
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: images/ubi9-hardened
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_NAMESPACE }}/ubi9-hardened:latest
+          provenance: false
+          sbom: false
+          build-args: SOURCE_DATE_EPOCH=${{ needs.plan.outputs.epoch }}
+
+      - name: Record the ubi9-hardened reference
+        if: matrix.image == 'ubi9-hardened'
+        env:
+          DIGEST: ${{ steps.ubi.outputs.digest || steps.ubi_amd64.outputs.digest }}
+          FALLBACK: ${{ steps.ubi.outcome == 'failure' && '1' || '' }}
+        run: |
+          [ -n "$DIGEST" ] || { echo "no digest from either ubi build"; exit 1; }
+          {
+            echo "PROD_REF=$IMAGE_NAMESPACE/ubi9-hardened@$DIGEST"
+            echo "DEV_REF="
+            echo "VERSION_TAG="
+            echo "DATE_TAG=$DATE_TAG"
+            echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+            echo "UBI_ARCH_FALLBACK=$FALLBACK"
+          } > "$OUT/refs.env"
+          if [ -n "$FALLBACK" ]; then echo "::warning::ubi9-hardened: the arm64 build failed under QEMU; shipped amd64 only"; fi
+
+      # --- common: sign, attest, scan, tag, verify ------------------------------------
+      - name: Sign keyless, attest SBOMs, scan with Trivy, tag, verify
+        run: tools/finish-image.sh "$IMAGE"
+
+      - id: refs
+        run: |
+          # shellcheck disable=SC1090
+          source "$OUT/refs.env"
+          {
+            echo "prod_digest=${PROD_REF#*@}"
+            echo "dev_digest=${DEV_REF#*@}"
+            echo "fallback=${UBI_ARCH_FALLBACK:-}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: SLSA build provenance (prod)
+        id: prov
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          subject-digest: ${{ steps.refs.outputs.prod_digest }}
+          push-to-registry: true
+
+      - name: SLSA build provenance (dev)
+        id: prov_dev
+        if: steps.refs.outputs.dev_digest != ''
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          subject-digest: ${{ steps.refs.outputs.dev_digest }}
+          push-to-registry: true
+
+      - name: Manifest entry and growth check
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROV_URL: ${{ steps.prov.outputs.attestation-url }}
+          DEV_PROV_URL: ${{ steps.prov_dev.outputs.attestation-url }}
+          FALLBACK: ${{ steps.refs.outputs.fallback }}
+        run: |
+          extra=()
+          [ -n "$FALLBACK" ] && extra+=(--ubi-arch-fallback)
+          python3 tools/factory.py entry --name "$IMAGE" --out-dir "$OUT" --namespace "$IMAGE_NAMESPACE" \
+            --run-url "$RUN_URL" --provenance-url "$PROV_URL" --dev-provenance-url "$DEV_PROV_URL" "${extra[@]}"
+          python3 tools/factory.py growth --baseline baseline.json --entries "$OUT/entries.json"
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: factory-${{ matrix.image }}
+          path: out/${{ matrix.image }}
+          if-no-files-found: warn
+
+  manifest:
+    needs: [plan, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: factory-*
+          path: out
+      - name: Merge the run's manifest and the baseline candidate
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          shopt -s nullglob
+          entries=(out/factory-*/entries.json)
+          [ ${#entries[@]} -gt 0 ] || { echo "no image produced an entry"; exit 1; }
+          python3 tools/factory.py merge --out manifest.json --baseline-out baseline-candidate.json \
+            --run-url "$RUN_URL" \
+            --rules-note "Signed keyless with cosign ${COSIGN_VERSION} (classic .sig/.att layout); SLSA v1.0 provenance via GitHub artifact attestations (Build Level 2); scanned with Trivy ${TRIVY_VERSION}; sizes are compressed pull sizes from the registry manifests." \
+            "${entries[@]}"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: manifest
+          path: |
+            manifest.json
+            baseline-candidate.json
+      - name: Fail the run if any image failed
+        if: needs.build.result != 'success'
+        run: |
+          echo "build job result: ${{ needs.build.result }}"
+          exit 1
