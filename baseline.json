@@ -1,0 +1,56 @@
+{
+  "schema": "nineline.factory-baseline/1",
+  "from_run": "https://github.com/optimal-cyber/nineline-images/actions/runs/38582655723",
+  "images": {
+    "base": {
+      "amd64": {
+        "package_count": 7,
+        "size_bytes": 4056433
+      },
+      "arm64": {
+        "package_count": 7,
+        "size_bytes": 3176456
+      }
+    },
+    "jre": {
+      "amd64": {
+        "package_count": 41,
+        "size_bytes": 79483396
+      },
+      "arm64": {
+        "package_count": 41,
+        "size_bytes": 77075847
+      }
+    },
+    "nginx": {
+      "amd64": {
+        "package_count": 24,
+        "size_bytes": 8995076
+      },
+      "arm64": {
+        "package_count": 24,
+        "size_bytes": 7759176
+      }
+    },
+    "tomcat": {
+      "amd64": {
+        "package_count": 45,
+        "size_bytes": 92918280
+      },
+      "arm64": {
+        "package_count": 45,
+        "size_bytes": 90402432
+      }
+    },
+    "ubi9-hardened": {
+      "amd64": {
+        "package_count": 32,
+        "size_bytes": 10631543
+      },
+      "arm64": {
+        "package_count": 32,
+        "size_bytes": 10053473
+      }
+    }
+  }
+}
