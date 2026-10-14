@@ -244,6 +244,7 @@ def merge(args):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "run_url": args.run_url,
         "notes": args.rules_note,
+        "tools": _load(args.tools, default={}) if args.tools else {},
         "images": entries,
     }
     with open(args.out, "w", encoding="utf-8") as fh:
@@ -272,6 +273,7 @@ def main(argv=None):
     m = sub.add_parser("merge")
     m.add_argument("--out", required=True); m.add_argument("--baseline-out", required=True)
     m.add_argument("--run-url", required=True); m.add_argument("--rules-note", default="")
+    m.add_argument("--tools", default="", help="tools.json written by the build job (tool name -> version)")
     m.add_argument("entries", nargs="+")
     a = ap.parse_args(argv)
     if a.cmd == "version-tag":

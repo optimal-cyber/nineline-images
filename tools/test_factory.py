@@ -113,9 +113,11 @@ def test_merge_writes_manifest_and_baseline_candidate(tmp_path):
     b = _out_dir(tmp_path, "ubi9-hardened", with_dev=False, fallback_single=True)
     factory.main(["entry", "--name", "ubi9-hardened", "--out-dir", str(b), "--namespace", "n", "--run-url", "u"])
     m, bl = str(tmp_path / "manifest.json"), str(tmp_path / "baseline.json")
+    write(str(tmp_path / "tools.json"), {"cosign": "v2.5.3", "trivy": "0.75.0", "syft": "1.54.0"})
     assert factory.main(["merge", "--out", m, "--baseline-out", bl, "--run-url", "u", "--rules-note", "n",
-                         str(a / "entries.json"), str(b / "entries.json")]) == 0
+                         "--tools", str(tmp_path / "tools.json"), str(a / "entries.json"), str(b / "entries.json")]) == 0
     manifest = json.load(open(m))
+    assert manifest["tools"] == {"cosign": "v2.5.3", "trivy": "0.75.0", "syft": "1.54.0"}
     assert [(e["name"], e["variant"]) for e in manifest["images"]] == [("nginx", "dev"), ("nginx", "prod"), ("ubi9-hardened", "prod")]
     baseline = json.load(open(bl))
     assert baseline["images"]["nginx"]["arm64"]["size_bytes"] == 3345 and "dev" not in json.dumps(baseline)

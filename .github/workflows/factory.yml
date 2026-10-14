@@ -111,6 +111,12 @@ jobs:
         run: |
           mkdir -p "$OUT"
           { cosign version; crane version; trivy --version | head -1; syft version | head -2; } | tee "$OUT/tool-versions.txt"
+          # The same, as data: the manifest carries it so the catalog can name the scanner.
+          jq -n --arg cosign "$(cosign version --json | jq -r .gitVersion)" \
+                --arg trivy "$(trivy version --format json | jq -r .Version)" \
+                --arg syft "$(syft version -o json | jq -r .version)" \
+                --arg crane "$(crane version)" --arg apko "$APKO_VERSION" \
+                '{cosign: $cosign, trivy: $trivy, syft: $syft, crane: $crane, apko: $apko}' | tee "$OUT/tools.json"
 
       # --- glibc family: apko -------------------------------------------------------
       - name: Install apko
@@ -239,8 +245,9 @@ jobs:
           shopt -s nullglob
           entries=(out/factory-*/entries.json)
           [ ${#entries[@]} -gt 0 ] || { echo "no image produced an entry"; exit 1; }
+          tools=(out/factory-*/tools.json)
           python3 tools/factory.py merge --out manifest.json --baseline-out baseline-candidate.json \
-            --run-url "$RUN_URL" \
+            --run-url "$RUN_URL" --tools "${tools[0]}" \
             --rules-note "Signed keyless with cosign ${COSIGN_VERSION} (classic .sig/.att layout); SLSA v1.0 provenance via GitHub artifact attestations (Build Level 2); scanned with Trivy ${TRIVY_VERSION}; sizes are compressed pull sizes from the registry manifests." \
             "${entries[@]}"
       - uses: actions/upload-artifact@v7.0.2
