@@ -6,3 +6,6 @@ local-kit/cosign.pub
 local-kit/scan_table.md
 out/
 local-kit/kit.out
+__pycache__/
+*.pyc
+.pytest_cache/
