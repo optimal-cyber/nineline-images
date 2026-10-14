@@ -140,6 +140,15 @@ def _variant_entry(name, out_dir, variant, ref, refs, namespace, run_url, proven
             },
             "scan": f"{variant}-{arch}.trivy.json",
         }
+    # The Rekor entry cosign 2.x reported when the run verified its own signature.
+    rekor = None
+    verify_path = os.path.join(out_dir, f"{variant}-verify.json")
+    if os.path.isfile(verify_path):
+        for v in _load(verify_path, default=[]) or []:
+            payload = ((v.get("optional") or {}).get("Bundle") or {}).get("Payload") or {}
+            if payload.get("logIndex") is not None:
+                rekor = int(payload["logIndex"])
+                break
     tags = ["latest"] if variant == "prod" else ["latest-dev"]
     if variant == "prod":
         tags += [t for t in (refs.get("VERSION_TAG"), refs.get("DATE_TAG")) if t]
@@ -150,7 +159,8 @@ def _variant_entry(name, out_dir, variant, ref, refs, namespace, run_url, proven
         "platforms": platforms,
         "signature": {"keyless": True, "cert_identity": refs.get("CERT_IDENTITY"),
                       "oidc_issuer": "https://token.actions.githubusercontent.com",
-                      "layout": "cosign classic .sig/.att tags", "verified_in_run": refs.get("VERIFIED") == "1"},
+                      "layout": "cosign classic .sig/.att tags", "verified_in_run": refs.get("VERIFIED") == "1",
+                      "rekor_log_index": rekor},
         "provenance": ({"kind": "github-artifact-attestation", "slsa": "v1.0 Build Level 2",
                         "url": provenance_url} if provenance_url else None),
         "build_run_url": run_url,

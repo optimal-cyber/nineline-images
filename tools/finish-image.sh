@@ -77,6 +77,10 @@ trivy image --quiet --platform linux/amd64 --scanners vuln --list-all-pkgs \
 verified=0
 cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$PROD_REF" \
   > "$OUT/prod-verify.json" && verified=1
+if [[ -n "${DEV_REF:-}" ]]; then
+  cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$DEV_REF" \
+    > "$OUT/dev-verify.json" || verified=0
+fi
 first=$(head -1 "$OUT/prod-platforms.txt" | cut -d' ' -f2)
 cosign verify-attestation --type spdxjson --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
   "${PROD_REF%@*}@$first" > "$OUT/prod-verify-attestation.json" || verified=0

@@ -57,6 +57,7 @@ def _out_dir(tmp_path, name="nginx", with_dev=True, fallback_single=False):
             write(str(out / f"{variant}-{a}-manifest.json"), {"layers": [{"size": 1000}, {"size": 2345}]})
             write(str(out / f"{variant}-{a}-config.json"), {"created": "2026-10-15T06:31:00Z", "config": {"User": "65532"}})
             write(str(out / f"{variant}-{a}.trivy.json"), trivy([("CVE-9", "nginx", "1.31.6", "LOW")], [("nginx", "1.31.6"), ("glibc", "2.42")]))
+    write(str(out / "prod-verify.json"), [{"critical": {}, "optional": {"Bundle": {"Payload": {"logIndex": 3251017395}}}}])
     write(str(out / "upstream-amd64-manifest.json"), {"layers": [{"size": 70_000_000}]})
     write(str(out / "upstream-amd64.trivy.json"), trivy([("CVE-5", "libc6", "2.36", "CRITICAL"), ("CVE-6", "zlib", "1.2", "HIGH")],
                                                         [(f"p{i}", "1") for i in range(140)]))
@@ -78,6 +79,7 @@ def test_entry_builds_prod_and_dev_from_the_files(tmp_path):
     assert prod["platforms"]["amd64"]["vulnerabilities"]["low"] == 1
     assert prod["created"] == "2026-10-15T06:31:00Z"
     assert prod["signature"]["verified_in_run"] is True and prod["provenance"]["slsa"] == "v1.0 Build Level 2"
+    assert prod["signature"]["rekor_log_index"] == 3251017395 and entries[1]["signature"]["rekor_log_index"] is None
     assert prod["upstream"]["scan"]["critical"] == 1 and prod["upstream"]["scan"]["packages"] == 140
     assert prod["upstream"]["size_bytes"] == 70_000_000 and prod["upstream"]["digest"] == "sha256:up"
     assert "upstream" not in entries[1]
